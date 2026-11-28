@@ -143,6 +143,7 @@ async def _assert_setup_retry_recovers(
     freezer: FrozenDateTimeFactory,
 ) -> None:
     """Assert a failed setup recovers when the API becomes valid."""
+    mock_dwdwfsapi.data_valid = False
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
@@ -151,7 +152,7 @@ async def _assert_setup_retry_recovers(
     mock_dwdwfsapi.data_valid = True
     freezer.tick(timedelta(seconds=6))
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     assert entry.state is ConfigEntryState.LOADED
     for sensor in (CURRENT_WARNING_SENSOR, ADVANCE_WARNING_SENSOR):
@@ -209,8 +210,10 @@ async def test_load_device_tracker_with_invalid_api_data(
     hass: HomeAssistant,
     entity_registry: er.EntityRegistry,
     mock_tracker_entry: MockConfigEntry,
+    mock_dwdwfsapi: MagicMock,
 ) -> None:
     """Test setup retry when position-based API data is invalid."""
+    mock_dwdwfsapi.data_valid = False
     mock_tracker_entry.add_to_hass(hass)
     entity_registry.async_get_or_create(
         "device_tracker",
