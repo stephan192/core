@@ -126,8 +126,10 @@ async def test_load_entry_without_region_or_tracker(hass: HomeAssistant) -> None
 async def test_load_entry_with_invalid_api_data(
     hass: HomeAssistant,
     mock_identifier_entry: MockConfigEntry,
+    mock_dwdwfsapi: MagicMock,
 ) -> None:
     """Test setup retry when the API returns invalid data."""
+    mock_dwdwfsapi.data_valid = False
     entry = await init_integration(hass, mock_identifier_entry)
 
     assert entry.state is ConfigEntryState.SETUP_RETRY
