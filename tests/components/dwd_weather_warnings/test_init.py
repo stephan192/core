@@ -7,6 +7,7 @@ from freezegun.api import FrozenDateTimeFactory
 from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
 
 from homeassistant.components.dwd_weather_warnings.const import (
+    ADVANCE_WARNING_SENSOR,
     API_ATTR_WARNING_COLOR,
     API_ATTR_WARNING_DESCRIPTION,
     API_ATTR_WARNING_END,
@@ -28,7 +29,12 @@ from homeassistant.components.dwd_weather_warnings.coordinator import (
     DwdWeatherWarningsCoordinator,
 )
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import ATTR_LATITUDE, ATTR_LONGITUDE, STATE_HOME
+from homeassistant.const import (
+    ATTR_LATITUDE,
+    ATTR_LONGITUDE,
+    STATE_HOME,
+    STATE_UNAVAILABLE,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntryType
@@ -125,6 +131,76 @@ async def test_load_entry_with_invalid_api_data(
     entry = await init_integration(hass, mock_identifier_entry)
 
     assert entry.state is ConfigEntryState.SETUP_RETRY
+
+
+async def _assert_setup_retry_recovers(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    entry: MockConfigEntry,
+    mock_dwdwfsapi: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Assert a failed setup recovers when the API becomes valid."""
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+
+    mock_dwdwfsapi.data_valid = True
+    freezer.tick(timedelta(seconds=6))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    for sensor in (CURRENT_WARNING_SENSOR, ADVANCE_WARNING_SENSOR):
+        entity_id = entity_registry.async_get_entity_id(
+            "sensor", DOMAIN, f"{entry.unique_id}-{sensor}"
+        )
+        assert entity_id is not None
+        state = hass.states.get(entity_id)
+        assert state is not None
+        assert state.state != STATE_UNAVAILABLE
+
+
+async def test_load_entry_recovers_from_invalid_api_data(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    mock_identifier_entry: MockConfigEntry,
+    mock_dwdwfsapi: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Test setup recovery with a warncell identifier."""
+    mock_identifier_entry.add_to_hass(hass)
+    await _assert_setup_retry_recovers(
+        hass, entity_registry, mock_identifier_entry, mock_dwdwfsapi, freezer
+    )
+
+
+async def test_load_device_tracker_recovers_from_invalid_api_data(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    mock_tracker_entry: MockConfigEntry,
+    mock_dwdwfsapi: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Test setup recovery with a device tracker."""
+    mock_tracker_entry.add_to_hass(hass)
+    entity_registry.async_get_or_create(
+        "device_tracker",
+        mock_tracker_entry.domain,
+        "uuid",
+        suggested_object_id="test_gps",
+        config_entry=mock_tracker_entry,
+    )
+    hass.states.async_set(
+        mock_tracker_entry.data[CONF_REGION_DEVICE_TRACKER],
+        STATE_HOME,
+        {ATTR_LATITUDE: 50.180454, ATTR_LONGITUDE: 7.610263},
+    )
+
+    await _assert_setup_retry_recovers(
+        hass, entity_registry, mock_tracker_entry, mock_dwdwfsapi, freezer
+    )
 
 
 async def test_load_device_tracker_with_invalid_api_data(
